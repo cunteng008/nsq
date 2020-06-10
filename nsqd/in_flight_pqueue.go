@@ -1,5 +1,7 @@
 package nsqd
 
+// 小根堆
+// inFlightPqueue队列按Message中的pri字段进行排序的（pri也是时间戳，是投递消息的超时时间）
 type inFlightPqueue []*Message
 
 func newInFlightPqueue(capacity int) inFlightPqueue {
@@ -15,7 +17,7 @@ func (pq inFlightPqueue) Swap(i, j int) {
 func (pq *inFlightPqueue) Push(x *Message) {
 	n := len(*pq)
 	c := cap(*pq)
-	if n+1 > c {
+	if n+1 > c { // 超过队列capacity则将capacity扩充两倍，
 		npq := make(inFlightPqueue, n, c*2)
 		copy(npq, *pq)
 		*pq = npq
@@ -23,7 +25,7 @@ func (pq *inFlightPqueue) Push(x *Message) {
 	*pq = (*pq)[0 : n+1]
 	x.index = n
 	(*pq)[n] = x
-	pq.up(n)
+	pq.up(n) //小根堆末尾插入数据，需往上调整
 }
 
 func (pq *inFlightPqueue) Pop() *Message {
@@ -36,7 +38,7 @@ func (pq *inFlightPqueue) Pop() *Message {
 		copy(npq, *pq)
 		*pq = npq
 	}
-	x := (*pq)[n-1]
+	x := (*pq)[n-1] //弹出旧的根节点
 	x.index = -1
 	*pq = (*pq)[0 : n-1]
 	return x
@@ -46,8 +48,8 @@ func (pq *inFlightPqueue) Remove(i int) *Message {
 	n := len(*pq)
 	if n-1 != i {
 		pq.Swap(i, n-1)
-		pq.down(i, n-1)
-		pq.up(i)
+		pq.down(i, n-1) //down完后此时(*pq)[:n-2]为小根堆，
+		pq.up(i)        // 相当于(*pq)[:n-2]为小根堆push (*pq)[n-2]元素后调整
 	}
 	x := (*pq)[n-1]
 	x.index = -1
@@ -55,6 +57,8 @@ func (pq *inFlightPqueue) Remove(i int) *Message {
 	return x
 }
 
+// 小根堆的根节点，即pri最小的节点，若其pri小于等于max则弹出，否则返回 nil 和 pri-max
+// 实例：消息 timeout 时间戳为 pri，传入当前时间戳，判断是否有 timeout 消息则弹出，否则返回还需等待时间
 func (pq *inFlightPqueue) PeekAndShift(max int64) (*Message, int64) {
 	if len(*pq) == 0 {
 		return nil, 0
@@ -80,6 +84,7 @@ func (pq *inFlightPqueue) up(j int) {
 	}
 }
 
+// 节点i数据变化，需要往i下调整
 func (pq *inFlightPqueue) down(i, n int) {
 	for {
 		j1 := 2*i + 1

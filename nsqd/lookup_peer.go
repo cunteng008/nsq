@@ -93,6 +93,7 @@ func (lp *lookupPeer) Close() error {
 func (lp *lookupPeer) Command(cmd *nsq.Command) ([]byte, error) {
 	initialState := lp.state
 	if lp.state != stateConnected {
+		// nsqd连接lookup peer
 		err := lp.Connect()
 		if err != nil {
 			return nil, err

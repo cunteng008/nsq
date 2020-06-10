@@ -7,15 +7,24 @@ import (
 	"time"
 )
 
+/*
+	producer是一个nsqd peer
+	channel   producers
+	topic     producers
+	consumer 可以查找拥有某个topic或channel的nsqd peer
+*/
 type RegistrationDB struct {
 	sync.RWMutex
 	registrationMap map[Registration]ProducerMap
 }
 
+/*
+	category的 client 指的是 tcp 连接 client，也就是 nsqd tcp 连接
+*/
 type Registration struct {
-	Category string
-	Key      string
-	SubKey   string
+	Category string // channel/topic/client
+	Key      string // topicName
+	SubKey   string // channelName，若类型为topic,subkey为空字符串
 }
 type Registrations []Registration
 

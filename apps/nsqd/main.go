@@ -23,6 +23,7 @@ type program struct {
 	nsqd *nsqd.NSQD
 }
 
+// 使用go-svc框架启动app
 func main() {
 	prg := &program{}
 	if err := svc.Run(prg, syscall.SIGINT, syscall.SIGTERM); err != nil {
@@ -78,7 +79,7 @@ func (p *program) Start() error {
 	}
 
 	go func() {
-		err := p.nsqd.Main()
+		err := p.nsqd.Main() //启动nsqd
 		if err != nil {
 			p.Stop()
 			os.Exit(1)

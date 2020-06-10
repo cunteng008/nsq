@@ -21,8 +21,10 @@ $(BLDDIR)/nsq_tail:    $(wildcard apps/nsq_tail/*.go    nsq/*.go internal/*/*.go
 $(BLDDIR)/nsq_stat:    $(wildcard apps/nsq_stat/*.go             internal/*/*.go)
 $(BLDDIR)/to_nsq:      $(wildcard apps/to_nsq/*.go               internal/*/*.go)
 
+# https://stackoverflow.com/questions/3220277/what-do-the-makefile-symbols-and-mean
+# dir 取目录名
 $(BLDDIR)/%:
-	@mkdir -p $(dir $@)
+	@mkdir -p $(dir $@) 
 	go build ${BLDFLAGS} -o $@ ./apps/$*
 
 $(APPS): %: $(BLDDIR)/%

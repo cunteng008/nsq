@@ -4,6 +4,7 @@ type dummyBackendQueue struct {
 	readChan chan []byte
 }
 
+// 假的BackendQueue，没有落盘功能
 func newDummyBackendQueue() BackendQueue {
 	return &dummyBackendQueue{readChan: make(chan []byte)}
 }

@@ -16,8 +16,8 @@ import (
 
 type Topic struct {
 	// 64bit atomic vars need to be first for proper alignment on 32bit platforms
-	messageCount uint64
-	messageBytes uint64
+	messageCount uint64 // topic收到的消息数量
+	messageBytes uint64 // topic共收到的总消息字节数
 
 	sync.RWMutex
 
@@ -26,10 +26,10 @@ type Topic struct {
 	backend           BackendQueue
 	memoryMsgChan     chan *Message
 	startChan         chan int
-	exitChan          chan int
-	channelUpdateChan chan int
-	waitGroup         util.WaitGroupWrapper
-	exitFlag          int32
+	exitChan          chan int              // 退出当前操作，比如
+	channelUpdateChan chan int              // topic的channelMap增删通知
+	waitGroup         util.WaitGroupWrapper //包裹执行的function,退出时需要等到所有包裹内function执行完毕
+	exitFlag          int32                 // 标志topic已关闭或正在关闭中
 	idFactory         *guidFactory
 
 	ephemeral      bool
@@ -61,9 +61,9 @@ func NewTopic(topicName string, ctx *context, deleteCallback func(*Topic)) *Topi
 	if ctx.nsqd.getOpts().MemQueueSize > 0 {
 		t.memoryMsgChan = make(chan *Message, ctx.nsqd.getOpts().MemQueueSize)
 	}
-	if strings.HasSuffix(topicName, "#ephemeral") {
+	if strings.HasSuffix(topicName, "#ephemeral") { // 消息不落磁盘
 		t.ephemeral = true
-		t.backend = newDummyBackendQueue()
+		t.backend = newDummyBackendQueue() // brilliant! 引入假的backendqueue，省了很多if-else判断
 	} else {
 		dqLogf := func(level diskqueue.LogLevel, f string, args ...interface{}) {
 			opts := ctx.nsqd.getOpts()
@@ -166,7 +166,7 @@ func (t *Topic) DeleteExistingChannel(channelName string) error {
 	// update messagePump state
 	select {
 	case t.channelUpdateChan <- 1:
-	case <-t.exitChan:
+	case <-t.exitChan: // 可以随机忽略channelUpdateChan操作
 	}
 
 	if numChannels == 0 && t.ephemeral == true {
@@ -275,7 +275,8 @@ func (t *Topic) messagePump() {
 	// main message loop
 	for {
 		select {
-		case msg = <-memoryMsgChan:
+		// 无序
+		case msg = <-memoryMsgChan: //推给channel的消息从磁盘和内容随机读取，无历史
 		case buf = <-backendChan:
 			msg, err = decodeMessage(buf)
 			if err != nil {
@@ -283,7 +284,7 @@ func (t *Topic) messagePump() {
 				continue
 			}
 		case <-t.channelUpdateChan:
-			chans = chans[:0]
+			chans = chans[:0] // 更新channel，因为有channel添加或删除
 			t.RLock()
 			for _, c := range t.channelMap {
 				chans = append(chans, c)
@@ -363,7 +364,7 @@ func (t *Topic) exit(deleted bool) error {
 		t.ctx.nsqd.logf(LOG_INFO, "TOPIC(%s): closing", t.name)
 	}
 
-	close(t.exitChan)
+	close(t.exitChan) // close chan后，<-exitChan总会返回一个值而不会阻塞
 
 	// synchronize the close of messagePump()
 	t.waitGroup.Wait()
@@ -408,6 +409,7 @@ finish:
 	return t.backend.Empty()
 }
 
+// 关闭topic将内存数据落盘
 func (t *Topic) flush() error {
 	var msgBuf bytes.Buffer
 

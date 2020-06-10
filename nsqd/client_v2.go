@@ -49,20 +49,24 @@ type identifyEvent struct {
 
 type clientV2 struct {
 	// 64bit atomic vars need to be first for proper alignment on 32bit platforms
-	ReadyCount    int64
-	InFlightCount int64
-	MessageCount  uint64
-	FinishCount   uint64
-	RequeueCount  uint64
 
+	// 能同时发送给client消息的最大总数
+	// 限制发送中消息的总数
+	ReadyCount    int64
+	InFlightCount int64  // 发送中消息总数
+	MessageCount  uint64 // 处于过发送中消息的总数
+	FinishCount   uint64 // 发送成功的消息总数
+	RequeueCount  uint64 // 重新发送的消息总数
+
+	// 统计客户端推送给各个topic的消息数，只有是client是producer才大于零
 	pubCounts map[string]uint64
 
 	writeLock sync.RWMutex
 	metaLock  sync.RWMutex
 
 	ID        int64
-	ctx       *context
-	UserAgent string
+	ctx       *context //nsqd
+	UserAgent string   //
 
 	// original connection
 	net.Conn
@@ -80,13 +84,13 @@ type clientV2 struct {
 
 	HeartbeatInterval time.Duration
 
-	MsgTimeout time.Duration
+	MsgTimeout time.Duration // 消息超时时间 now+MsgTimeout=client消息的超时时间戳
 
 	State          int32
-	ConnectTime    time.Time
-	Channel        *Channel
-	ReadyStateChan chan int
-	ExitChan       chan int
+	ConnectTime    time.Time //连接上nsqd server的时间
+	Channel        *Channel  // 订阅的channel
+	ReadyStateChan chan int  // 准备接收消息
+	ExitChan       chan int  // 退出protocol_v2的messagePump，即停止接收消息
 
 	ClientID string
 	Hostname string
@@ -94,10 +98,10 @@ type clientV2 struct {
 	SampleRate int32
 
 	IdentifyEventChan chan identifyEvent
-	SubEventChan      chan *Channel
+	SubEventChan      chan *Channel // 将订阅成功的的Channel发塞进SubEventChan
 
 	TLS     int32
-	Snappy  int32
+	Snappy  int32 //
 	Deflate int32
 
 	// re-usable buffer for reading the 4-byte lengths off the wire
@@ -250,6 +254,7 @@ func (c *clientV2) Stats() ClientStats {
 	return stats
 }
 
+// client可以是producer
 func (c *clientV2) IsProducer() bool {
 	c.metaLock.RLock()
 	retval := len(c.pubCounts) > 0
@@ -360,6 +365,7 @@ func (c *clientV2) SendingMessage() {
 	atomic.AddUint64(&c.MessageCount, 1)
 }
 
+// 记录对应生产者生产的消息
 func (c *clientV2) PublishedMessage(topic string, count uint64) {
 	c.metaLock.Lock()
 	c.pubCounts[topic] += count

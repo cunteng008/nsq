@@ -47,7 +47,7 @@ type NSQD struct {
 
 	sync.RWMutex
 
-	opts atomic.Value
+	opts atomic.Value //配置
 
 	dl        *dirlock.DirLock
 	isLoading int32
@@ -62,19 +62,20 @@ type NSQD struct {
 	lookupPeers atomic.Value
 
 	tcpServer     *tcpServer
-	tcpListener   net.Listener
-	httpListener  net.Listener
+	tcpListener   net.Listener //tpc监听，处理函数在protocol_v2.go
+	httpListener  net.Listener //http监听，处理函数在http.go
 	httpsListener net.Listener
 	tlsConfig     *tls.Config
 
 	poolSize int
 
+	// 通知 chan，当增删 topic/channel 的时候，通知 lookupLoop 进行 Register/Unregister
 	notifyChan           chan interface{}
 	optsNotificationChan chan struct{}
 	exitChan             chan int
 	waitGroup            util.WaitGroupWrapper
 
-	ci *clusterinfo.ClusterInfo
+	ci *clusterinfo.ClusterInfo //nsqd集群信息
 }
 
 func New(opts *Options) (*NSQD, error) {
@@ -323,6 +324,7 @@ func writeSyncFile(fn string, data []byte) error {
 	return err
 }
 
+// 恢复到之前的 topic 和 channel
 func (n *NSQD) LoadMetadata() error {
 	atomic.StoreInt32(&n.isLoading, 1)
 	defer atomic.StoreInt32(&n.isLoading, 0)
@@ -367,6 +369,7 @@ func (n *NSQD) LoadMetadata() error {
 	return nil
 }
 
+// 备份 topic 和 channel 名，以便重启时恢复状态
 func (n *NSQD) PersistMetadata() error {
 	// persist metadata about what topics/channels we have, across restarts
 	fileName := newMetadataFile(n.getOpts())
@@ -462,7 +465,7 @@ func (n *NSQD) Exit() {
 func (n *NSQD) GetTopic(topicName string) *Topic {
 	// most likely, we already have this topic, so try read lock first.
 	n.RLock()
-	t, ok := n.topicMap[topicName]
+	t, ok := n.topicMap[topicName] //先利用读锁，看看topic是否已存在^-^
 	n.RUnlock()
 	if ok {
 		return t
@@ -470,7 +473,7 @@ func (n *NSQD) GetTopic(topicName string) *Topic {
 
 	n.Lock()
 
-	t, ok = n.topicMap[topicName]
+	t, ok = n.topicMap[topicName] //竟然拿到写锁了，那就顺便再试一次吧
 	if ok {
 		n.Unlock()
 		return t
@@ -478,7 +481,7 @@ func (n *NSQD) GetTopic(topicName string) *Topic {
 	deleteCallback := func(t *Topic) {
 		n.DeleteExistingTopic(t.name)
 	}
-	t = NewTopic(topicName, &context{n}, deleteCallback)
+	t = NewTopic(topicName, &context{n}, deleteCallback) //竟然没有topic，那我新创建吧
 	n.topicMap[topicName] = t
 
 	n.Unlock()
@@ -550,6 +553,7 @@ func (n *NSQD) DeleteExistingTopic(topicName string) error {
 	return nil
 }
 
+// 通知topic/channel增删
 func (n *NSQD) Notify(v interface{}) {
 	// since the in-memory metadata is incomplete,
 	// should not persist metadata while loading it.
@@ -605,7 +609,7 @@ func (n *NSQD) resizePool(num int, workCh chan *Channel, responseCh chan bool, c
 			break
 		} else if idealPoolSize < n.poolSize {
 			// contract
-			closeCh <- 1
+			closeCh <- 1 // 关闭一个goroutine
 			n.poolSize--
 		} else {
 			// expand
@@ -624,7 +628,7 @@ func (n *NSQD) queueScanWorker(workCh chan *Channel, responseCh chan bool, close
 		select {
 		case c := <-workCh:
 			now := time.Now().UnixNano()
-			dirty := false
+			dirty := false // 如果channel有超时未发消息，则为dirty channel。即不按时完成工作的channel
 			if c.processInFlightQueue(now) {
 				dirty = true
 			}
@@ -632,7 +636,7 @@ func (n *NSQD) queueScanWorker(workCh chan *Channel, responseCh chan bool, close
 				dirty = true
 			}
 			responseCh <- dirty
-		case <-closeCh:
+		case <-closeCh: // 结束goroutine
 			return
 		}
 	}
@@ -651,6 +655,7 @@ func (n *NSQD) queueScanWorker(workCh chan *Channel, responseCh chan bool, close
 //
 // If QueueScanDirtyPercent (default: 25%) of the selected channels were dirty,
 // the loop continues without sleep.
+// 这里认为未按时完成工作(按时发送消息)的channel大多数情况不超过总channel数的25%
 func (n *NSQD) queueScanLoop() {
 	workCh := make(chan *Channel, n.getOpts().QueueScanSelectionCount)
 	responseCh := make(chan bool, n.getOpts().QueueScanSelectionCount)
@@ -682,7 +687,7 @@ func (n *NSQD) queueScanLoop() {
 		}
 
 	loop:
-		for _, i := range util.UniqRands(num, len(channels)) {
+		for _, i := range util.UniqRands(num, len(channels)) { //
 			workCh <- channels[i]
 		}
 

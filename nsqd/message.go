@@ -24,9 +24,9 @@ type Message struct {
 	// for in-flight handling
 	deliveryTS time.Time
 	clientID   int64
-	pri        int64
-	index      int
-	deferred   time.Duration
+	pri        int64         // timeout 时间戳
+	index      int           // 消息在小根堆inFlightPqueue的index
+	deferred   time.Duration // 消息的延迟发送时间
 }
 
 func NewMessage(id MessageID, body []byte) *Message {

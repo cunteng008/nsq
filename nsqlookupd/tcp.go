@@ -13,6 +13,7 @@ type tcpServer struct {
 	conns sync.Map
 }
 
+// 处理新的tcp连接
 func (p *tcpServer) Handle(clientConn net.Conn) {
 	p.ctx.nsqlookupd.logf(LOG_INFO, "TCP: new client(%s)", clientConn.RemoteAddr())
 

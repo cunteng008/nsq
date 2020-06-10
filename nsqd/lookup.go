@@ -21,6 +21,7 @@ func connectCallback(n *NSQD, hostname string) func(*lookupPeer) {
 		ci["hostname"] = hostname
 		ci["broadcast_address"] = n.getOpts().BroadcastAddress
 
+		//给lookup peer告知nsqd的信息
 		cmd, err := nsq.Identify(ci)
 		if err != nil {
 			lp.Close()
@@ -41,6 +42,7 @@ func connectCallback(n *NSQD, hostname string) func(*lookupPeer) {
 				lp.Close()
 				return
 			} else {
+				// 成功获取到lookup peer回应的info
 				n.logf(LOG_INFO, "LOOKUPD(%s): peer info %+v", lp, lp.Info)
 				if lp.Info.BroadcastAddress == "" {
 					n.logf(LOG_ERROR, "LOOKUPD(%s): no broadcast address", lp)
@@ -51,6 +53,7 @@ func connectCallback(n *NSQD, hostname string) func(*lookupPeer) {
 		// build all the commands first so we exit the lock(s) as fast as possible
 		var commands []*nsq.Command
 		n.RLock()
+		// 初次连接，需要向lookup peer注册所有topic和channel
 		for _, topic := range n.topicMap {
 			topic.RLock()
 			if len(topic.channelMap) == 0 {
@@ -64,6 +67,7 @@ func connectCallback(n *NSQD, hostname string) func(*lookupPeer) {
 		}
 		n.RUnlock()
 
+		// 统一向lookup peer发起命令
 		for _, cmd := range commands {
 			n.logf(LOG_INFO, "LOOKUPD(%s): %s", lp, cmd)
 			_, err := lp.Command(cmd)
@@ -75,6 +79,7 @@ func connectCallback(n *NSQD, hostname string) func(*lookupPeer) {
 	}
 }
 
+// 循环处理与lookup peer的连接和交互
 func (n *NSQD) lookupLoop() {
 	var lookupPeers []*lookupPeer
 	var lookupAddrs []string
@@ -87,11 +92,12 @@ func (n *NSQD) lookupLoop() {
 	}
 
 	// for announcements, lookupd determines the host automatically
+	// 每15秒ping一次lookup peer
 	ticker := time.Tick(15 * time.Second)
 	for {
 		if connect {
 			for _, host := range n.getOpts().NSQLookupdTCPAddresses {
-				if in(host, lookupAddrs) {
+				if in(host, lookupAddrs) { //避免重复连接
 					continue
 				}
 				n.logf(LOG_INFO, "LOOKUP(%s): adding peer", host)

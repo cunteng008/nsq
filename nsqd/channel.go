@@ -52,21 +52,23 @@ type Channel struct {
 	exitMutex     sync.RWMutex
 
 	// state tracking
-	clients        map[int64]Consumer
-	paused         int32
-	ephemeral      bool
+	clients map[int64]Consumer
+	paused  int32
+	//标志channel是否为临时channel，若为临时channel在client清空后会删除channel
+	ephemeral bool
+	//topic删除channel的回调，topic会在deleteCallbak中调用DeleteExistingChannel
 	deleteCallback func(*Channel)
-	deleter        sync.Once
+	deleter        sync.Once //删除channel
 
 	// Stats tracking
 	e2eProcessingLatencyStream *quantile.Quantile
 
 	// TODO: these can be DRYd up
-	deferredMessages map[MessageID]*pqueue.Item
-	deferredPQ       pqueue.PriorityQueue
+	deferredMessages map[MessageID]*pqueue.Item //延迟发送型消息
+	deferredPQ       pqueue.PriorityQueue       //小根堆，按延迟时间
 	deferredMutex    sync.Mutex
-	inFlightMessages map[MessageID]*Message
-	inFlightPQ       inFlightPqueue
+	inFlightMessages map[MessageID]*Message //发送中消息的map
+	inFlightPQ       inFlightPqueue         //小根队，按消息timeout时间戳pri，数据跟inFlightMessages是重复的
 	inFlightMutex    sync.Mutex
 }
 
@@ -249,7 +251,6 @@ finish:
 		}
 	}
 	c.deferredMutex.Unlock()
-
 	return nil
 }
 
@@ -351,11 +352,11 @@ func (c *Channel) TouchMessage(clientID int64, id MessageID, clientMsgTimeout ti
 
 // FinishMessage successfully discards an in-flight message
 func (c *Channel) FinishMessage(clientID int64, id MessageID) error {
-	msg, err := c.popInFlightMessage(clientID, id)
+	msg, err := c.popInFlightMessage(clientID, id) //client已处理消息，将消息从inFlightMessages Map中移除
 	if err != nil {
 		return err
 	}
-	c.removeFromInFlightPQ(msg)
+	c.removeFromInFlightPQ(msg) // 将消息从发送中队列移除 (即小根堆)
 	if c.e2eProcessingLatencyStream != nil {
 		c.e2eProcessingLatencyStream.Insert(msg.Timestamp)
 	}
@@ -531,6 +532,7 @@ func (c *Channel) addToDeferredPQ(item *pqueue.Item) {
 	c.deferredMutex.Unlock()
 }
 
+// 处理延迟消息
 func (c *Channel) processDeferredQueue(t int64) bool {
 	c.exitMutex.RLock()
 	defer c.exitMutex.RUnlock()
@@ -562,6 +564,7 @@ exit:
 	return dirty
 }
 
+// 处理发送中队列的超时消息
 func (c *Channel) processInFlightQueue(t int64) bool {
 	c.exitMutex.RLock()
 	defer c.exitMutex.RUnlock()
@@ -573,7 +576,7 @@ func (c *Channel) processInFlightQueue(t int64) bool {
 	dirty := false
 	for {
 		c.inFlightMutex.Lock()
-		msg, _ := c.inFlightPQ.PeekAndShift(t)
+		msg, _ := c.inFlightPQ.PeekAndShift(t) //
 		c.inFlightMutex.Unlock()
 
 		if msg == nil {
@@ -592,7 +595,7 @@ func (c *Channel) processInFlightQueue(t int64) bool {
 		if ok {
 			client.TimedOutMessage()
 		}
-		c.put(msg)
+		c.put(msg) //重新将
 	}
 
 exit:

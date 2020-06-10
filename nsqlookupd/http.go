@@ -34,6 +34,7 @@ func newHTTPServer(ctx *Context) *httpServer {
 	router.Handle("GET", "/info", http_api.Decorate(s.doInfo, log, http_api.V1))
 
 	// v1 negotiate
+	//not graceful，https://github.com/nsqio/nsq/issues/1248
 	router.Handle("GET", "/debug", http_api.Decorate(s.doDebug, log, http_api.V1))
 	router.Handle("GET", "/lookup", http_api.Decorate(s.doLookup, log, http_api.V1))
 	router.Handle("GET", "/topics", http_api.Decorate(s.doTopics, log, http_api.V1))
@@ -77,6 +78,7 @@ func (s *httpServer) doInfo(w http.ResponseWriter, req *http.Request, ps httprou
 	}, nil
 }
 
+// 查找所有topic
 func (s *httpServer) doTopics(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
 	topics := s.ctx.nsqlookupd.DB.FindRegistrations("topic", "*", "").Keys()
 	return map[string]interface{}{
@@ -84,6 +86,7 @@ func (s *httpServer) doTopics(w http.ResponseWriter, req *http.Request, ps httpr
 	}, nil
 }
 
+// 查找某个 topic 所有 channel
 func (s *httpServer) doChannels(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
 	reqParams, err := http_api.NewReqParams(req)
 	if err != nil {
@@ -101,6 +104,7 @@ func (s *httpServer) doChannels(w http.ResponseWriter, req *http.Request, ps htt
 	}, nil
 }
 
+// 查找某个topic的所有nsqd peer 和 channel信息
 func (s *httpServer) doLookup(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
 	reqParams, err := http_api.NewReqParams(req)
 	if err != nil {

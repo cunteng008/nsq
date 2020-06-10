@@ -9,17 +9,20 @@ import (
 )
 
 type tcpServer struct {
-	ctx   *context
+	ctx *context
+	// 并发安全Map,存储client的连接
+	// <RemoteAddr,clientConn>
 	conns sync.Map
 }
 
+// 处理tcp连接
 func (p *tcpServer) Handle(clientConn net.Conn) {
 	p.ctx.nsqd.logf(LOG_INFO, "TCP: new client(%s)", clientConn.RemoteAddr())
 
 	// The client should initialize itself by sending a 4 byte sequence indicating
 	// the version of the protocol that it intends to communicate, this will allow us
 	// to gracefully upgrade the protocol away from text/line oriented to whatever...
-	buf := make([]byte, 4)
+	buf := make([]byte, 4) //协议版本，便于升级
 	_, err := io.ReadFull(clientConn, buf)
 	if err != nil {
 		p.ctx.nsqd.logf(LOG_ERROR, "failed to read protocol version - %s", err)

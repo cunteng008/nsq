@@ -33,6 +33,8 @@ type protocolV2 struct {
 	ctx *context
 }
 
+// IOLoop 是 nsqd tcp server 的 hanlder
+// 由tcp.go的Handle函数调用
 func (p *protocolV2) IOLoop(conn net.Conn) error {
 	var err error
 	var line []byte
@@ -60,6 +62,7 @@ func (p *protocolV2) IOLoop(conn net.Conn) error {
 
 		// ReadSlice does not allocate new space for the data each request
 		// ie. the returned slice is only valid until the next call to it
+		// 直接使用buffer的slice,不复制，减少了gc次数。下次io写入会覆盖，
 		line, err = client.Reader.ReadSlice('\n')
 		if err != nil {
 			if err == io.EOF {
@@ -81,7 +84,7 @@ func (p *protocolV2) IOLoop(conn net.Conn) error {
 		p.ctx.nsqd.logf(LOG_DEBUG, "PROTOCOL(V2): [%s] %s", client, params)
 
 		var response []byte
-		response, err = p.Exec(client, params)
+		response, err = p.Exec(client, params) // 处理 tcp 请求
 		if err != nil {
 			ctx := ""
 			if parentErr := err.(protocol.ChildErr).Parent(); parentErr != nil {
@@ -122,6 +125,7 @@ func (p *protocolV2) IOLoop(conn net.Conn) error {
 	return err
 }
 
+// 将消息发送给 channel 的 client
 func (p *protocolV2) SendMessage(client *clientV2, msg *Message) error {
 	p.ctx.nsqd.logf(LOG_DEBUG, "PROTOCOL(V2): writing msg(%s) to client(%s) - %s", msg.ID, client, msg.Body)
 	var buf = &bytes.Buffer{}
@@ -156,7 +160,7 @@ func (p *protocolV2) Send(client *clientV2, frameType int32, data []byte) error 
 	}
 
 	if frameType != frameTypeMessage {
-		err = client.Flush()
+		err = client.Flush() // flush将缓冲内容立即写入io.Writer，后清空缓冲
 	}
 
 	client.writeLock.Unlock()
@@ -174,11 +178,14 @@ func (p *protocolV2) Exec(client *clientV2, params [][]byte) ([]byte, error) {
 	}
 	switch {
 	case bytes.Equal(params[0], []byte("FIN")):
-		return p.FIN(client, params)
-	case bytes.Equal(params[0], []byte("RDY")):
+		return p.FIN(client, params) // client通知 nsqd 该消息已处理
+	case bytes.Equal(params[0], []byte("RDY")): //client向nsqd发送RDY，通知，已准备好接受指定的消息数量count
 		return p.RDY(client, params)
+
+		// client通知nsqd, 需要重发某个消息。cases: 在client处理消息失败、消息丢失
 	case bytes.Equal(params[0], []byte("REQ")):
 		return p.REQ(client, params)
+
 	case bytes.Equal(params[0], []byte("PUB")):
 		return p.PUB(client, params)
 	case bytes.Equal(params[0], []byte("MPUB")):
@@ -189,7 +196,7 @@ func (p *protocolV2) Exec(client *clientV2, params [][]byte) ([]byte, error) {
 		return p.NOP(client, params)
 	case bytes.Equal(params[0], []byte("TOUCH")):
 		return p.TOUCH(client, params)
-	case bytes.Equal(params[0], []byte("SUB")):
+	case bytes.Equal(params[0], []byte("SUB")): // 订阅channel
 		return p.SUB(client, params)
 	case bytes.Equal(params[0], []byte("CLS")):
 		return p.CLS(client, params)
@@ -269,8 +276,8 @@ func (p *protocolV2) messagePump(client *clientV2, startedChan chan bool) {
 				goto exit
 			}
 			flushed = true
-		case <-client.ReadyStateChan:
-		case subChannel = <-subEventChan:
+		case <-client.ReadyStateChan: // 什么事情也不做，只是进入下一次循环
+		case subChannel = <-subEventChan: //订阅channel
 			// you can't SUB anymore
 			subEventChan = nil
 		case identifyData := <-identifyEventChan:
@@ -299,6 +306,9 @@ func (p *protocolV2) messagePump(client *clientV2, startedChan chan bool) {
 			if err != nil {
 				goto exit
 			}
+
+		// client consume message, each message will be delivered to a random client
+		// Therefore, if channel has multiple clients, one message only can be consumed by one client
 		case b := <-backendMsgChan:
 			if sampleRate > 0 && rand.Int31n(100) > sampleRate {
 				continue
@@ -318,6 +328,8 @@ func (p *protocolV2) messagePump(client *clientV2, startedChan chan bool) {
 				goto exit
 			}
 			flushed = false
+		// client consume message, each message will be delivered to a random client
+		// Therefore, if channel has multiple clients, one message only can be consumed by one client
 		case msg := <-memoryMsgChan:
 			if sampleRate > 0 && rand.Int31n(100) > sampleRate {
 				continue
@@ -579,6 +591,7 @@ func (p *protocolV2) CheckAuth(client *clientV2, cmd, topicName, channelName str
 	return nil
 }
 
+// 订阅 channel
 func (p *protocolV2) SUB(client *clientV2, params [][]byte) ([]byte, error) {
 	if atomic.LoadInt32(&client.State) != stateInit {
 		return nil, protocol.NewFatalClientErr(nil, "E_INVALID", "cannot SUB in current state")
@@ -683,7 +696,7 @@ func (p *protocolV2) FIN(client *clientV2, params [][]byte) ([]byte, error) {
 		return nil, protocol.NewFatalClientErr(nil, "E_INVALID", "FIN insufficient number of params")
 	}
 
-	id, err := getMessageID(params[1])
+	id, err := getMessageID(params[1]) // client已处理的消息id
 	if err != nil {
 		return nil, protocol.NewFatalClientErr(nil, "E_INVALID", err.Error())
 	}
